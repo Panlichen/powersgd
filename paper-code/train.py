@@ -7,6 +7,7 @@ import time
 
 import numpy as np
 import torch
+import logging
 
 import gradient_reducers
 import tasks
@@ -64,14 +65,14 @@ config = dict(
     log_verbosity=2,
 )
 
-output_dir = "./output.tmp"  # will be overwritten by run.py
+output_dir = "/home/mist/output.tmp"  # will be overwritten by run.py
 
 
 def main():
     torch.manual_seed(config["seed"] + config["rank"])
     np.random.seed(config["seed"] + config["rank"])
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     timer = Timer(verbosity_level=config["log_verbosity"], log_fn=metric)
 
@@ -504,4 +505,10 @@ def check_model_consistency_across_workers(model, epoch):
 
 
 if __name__ == "__main__":
+    # （DEBUG, INFO, WARNING, ERROR, CRITICAL）
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d, %(funcName)s)',  # 定义日志格式
+        datefmt='%Y-%m-%d %H:%M:%S',  # 定义日期格式
+    )
     main()
