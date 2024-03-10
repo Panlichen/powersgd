@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List
 import torch
 from torch.utils.data import DataLoader
 import torchvision
+import logging
 
 from mean_accumulator import MeanAccumulator
 from .utils import DistributedSampler
@@ -27,8 +28,14 @@ class CifarTask:
         self._train_set, self._test_set = self._create_dataset(
             data_root=os.path.join(os.getenv("DATA"), "data")
         )
+        logging.info(f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} after _create_dataset")
 
         self._model = self._create_model()
+
+        logging.info(f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} after _create_model")
+        for name, param in self._model.named_parameters():
+            logging.info(f"Layer: {name} | Device: {param.device}, {param.numel()} parameters")
+
         self._criterion = torch.nn.CrossEntropyLoss().to(self._device)
 
         self._epoch = 0  # Counts how many times train_iterator was called
@@ -177,7 +184,7 @@ class CifarTask:
 
     def _create_dataset(self, data_root="./data"):
         """Create train and test datasets"""
-        dataset = torchvision.datasets.CIFAR10
+        dataset = torchvision.datasets.CIFAR100
 
         data_mean = (0.4914, 0.4822, 0.4465)
         data_stddev = (0.2023, 0.1994, 0.2010)

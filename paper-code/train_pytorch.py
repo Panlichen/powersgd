@@ -4,6 +4,7 @@ import datetime
 import os
 import re
 import time
+import logging
 
 import numpy as np
 import torch
@@ -57,13 +58,13 @@ config = dict(
     task_architecture="ResNet18",
     seed=42,
     rank=0,
-    n_workers=1,
+    n_workers=2,
     distributed_init_file=None,
     log_verbosity=2,
     fp16_compression=False,
 )
 
-output_dir = "./output.tmp"  # will be overwritten by run.py
+output_dir = "/home/mist/output.tmp"  # will be overwritten by run.py
 
 
 def main():
@@ -73,39 +74,58 @@ def main():
     assert config["optimizer_mom_before_reduce"] == False
     assert config["optimizer_wd_before_reduce"] == False
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     timer = Timer(verbosity_level=config["log_verbosity"], log_fn=metric)
 
     assert torch.distributed.is_available()
-    if config["distributed_init_file"] is None:
-        config["distributed_init_file"] = os.path.join(output_dir, "dist_init")
+    # if config["distributed_init_file"] is None:
+    #     config["distributed_init_file"] = os.path.join(output_dir, "dist_init")
+
+    process_group = torch.distributed.init_process_group(
+        backend=config["distributed_backend"],
+        # init_method="file://" + os.path.abspath(config["distributed_init_file"]),
+        timeout=datetime.timedelta(seconds=120),
+        # world_size=config["n_workers"],
+        # rank=config["rank"],
+    )
+    config['n_workers'] = torch.distributed.get_world_size()
+    config['rank'] = torch.distributed.get_rank()
+    torch.cuda.set_device(torch.distributed.get_rank())
+    # （DEBUG, INFO, WARNING, ERROR, CRITICAL）
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d, %(funcName)s)',  # 定义日志格式
+        datefmt='%Y-%m-%d %H:%M:%S',  # 定义日期格式
+        filename=f'log-{torch.distributed.get_rank()}.log',  # 日志输出到这个文件中
+        filemode='w',  # 'a' 表示追加模式，默认值；'w' 表示覆写模式
+    )
     print(
         "Distributed init: rank {}/{} - {}".format(
             config["rank"], config["n_workers"], config["distributed_init_file"]
         )
     )
-    process_group = torch.distributed.init_process_group(
-        backend=config["distributed_backend"],
-        init_method="file://" + os.path.abspath(config["distributed_init_file"]),
-        timeout=datetime.timedelta(seconds=120),
-        world_size=config["n_workers"],
-        rank=config["rank"],
-    )
 
     if torch.distributed.get_rank() == 0:
+        logging.info(f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} prepare data")
         if config["task"] == "Cifar":
             download_cifar()
+            logging.info(f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} after download_cifar()")
         elif config["task"] == "LSTM":
             download_wikitext2()
+    logging.info(f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} before barrier")
     torch.distributed.barrier()
+    logging.info(f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} after barrier")
     torch.cuda.synchronize()
+    logging.info(f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} after synchronize")
 
     task = tasks.build(task_name=config["task"], device=device, timer=timer, **config)
+    logging.info(f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} after build")
 
     task._model = torch.nn.parallel.DistributedDataParallel(
         task._model, process_group=process_group
     )
+    logging.info(f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} after torch.nn.parallel.DistributedDataParallel")
 
     if config["use_powersgd"]:
         state = powerSGD.PowerSGDState(
@@ -149,8 +169,8 @@ def main():
     else:
 
         def hook(
-            process_group: dist.ProcessGroup, bucket: dist._GradBucket
-        ) -> torch.futures.Future:
+            process_group: dist.ProcessGroup, bucket: dist.GradBucket):
+        # ) -> torch.futures.Future:
             start = time.time_ns() / 1_000_000_000
 
             def stop_the_time(fut):
@@ -327,7 +347,7 @@ def is_conv_param(parameter_name):
 def download_cifar(data_root=os.path.join(os.getenv("DATA"), "data")):
     import torchvision
 
-    dataset = torchvision.datasets.CIFAR10
+    dataset = torchvision.datasets.CIFAR100
     training_set = dataset(root=data_root, train=True, download=True)
     test_set = dataset(root=data_root, train=False, download=True)
 
