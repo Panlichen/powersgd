@@ -5,6 +5,7 @@ import os
 import re
 import time
 import logging
+import logging
 
 import numpy as np
 import torch
@@ -59,6 +60,7 @@ config = dict(
     seed=42,
     rank=0,
     n_workers=2,
+    n_workers=2,
     distributed_init_file=None,
     log_verbosity=2,
     fp16_compression=False,
@@ -79,6 +81,27 @@ def main():
     timer = Timer(verbosity_level=config["log_verbosity"], log_fn=metric)
 
     assert torch.distributed.is_available()
+    # if config["distributed_init_file"] is None:
+    #     config["distributed_init_file"] = os.path.join(output_dir, "dist_init")
+
+    process_group = torch.distributed.init_process_group(
+        backend=config["distributed_backend"],
+        # init_method="file://" + os.path.abspath(config["distributed_init_file"]),
+        timeout=datetime.timedelta(seconds=120),
+        # world_size=config["n_workers"],
+        # rank=config["rank"],
+    )
+    config['n_workers'] = torch.distributed.get_world_size()
+    config['rank'] = torch.distributed.get_rank()
+    torch.cuda.set_device(torch.distributed.get_rank())
+    # （DEBUG, INFO, WARNING, ERROR, CRITICAL）
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d, %(funcName)s)',  # 定义日志格式
+        datefmt='%Y-%m-%d %H:%M:%S',  # 定义日期格式
+        filename=f'log-{torch.distributed.get_rank()}.log',  # 日志输出到这个文件中
+        filemode='w',  # 'a' 表示追加模式，默认值；'w' 表示覆写模式
+    )
     # if config["distributed_init_file"] is None:
     #     config["distributed_init_file"] = os.path.join(output_dir, "dist_init")
 
@@ -169,6 +192,8 @@ def main():
     else:
 
         def hook(
+            process_group: dist.ProcessGroup, bucket: dist.GradBucket):
+        # ) -> torch.futures.Future:
             process_group: dist.ProcessGroup, bucket: dist.GradBucket):
         # ) -> torch.futures.Future:
             start = time.time_ns() / 1_000_000_000
@@ -347,6 +372,7 @@ def is_conv_param(parameter_name):
 def download_cifar(data_root=os.path.join(os.getenv("DATA"), "data")):
     import torchvision
 
+    dataset = torchvision.datasets.CIFAR100
     dataset = torchvision.datasets.CIFAR100
     training_set = dataset(root=data_root, train=True, download=True)
     test_set = dataset(root=data_root, train=False, download=True)
