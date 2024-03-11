@@ -97,6 +97,7 @@ def main():
             download_cifar()
         elif config["task"] == "LSTM":
             download_wikitext2()
+            print(f"load wikitext2 success")
     torch.distributed.barrier()
     torch.cuda.synchronize()
 
